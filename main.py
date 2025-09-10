@@ -1,120 +1,98 @@
 import streamlit as st
-import requests
 import numpy as np
+import joblib
 import matplotlib.pyplot as plt
-import pandas as pd 
+import pandas as pd
 
+# -----------------------------
+# Load trained model
+# -----------------------------
+model = joblib.load('collision_predictor_model.pkl')
 
 st.set_page_config(page_title="Satellite Collision Predictor", layout="centered")
+st.title("🛰 Satellite Collision Predictor")
 
-# Title
-st.title("🛰️ Satellite Collision Predictor")
-
-# Two columns for inputs
+# -----------------------------
+# Input Fields
+# -----------------------------
+st.subheader("Enter Satellite Positions (km)")
 col1, col2 = st.columns(2)
 
 with col1:
-    st.subheader("Satellite 1 Details")
-    sat1_long = st.number_input("Longitude (x1)", -180.0, 180.0, 45.0, key="s1_long")
-    sat1_lat = st.number_input("Latitude (y1)", -90.0, 90.0, 10.0, key="s1_lat")
-    sat1_alt = st.number_input("Altitude (z1)", -90.0, 90.0, -12.0, key="s1_alt")
+    x1 = st.number_input("Satellite 1 - X:", value=0.0, format="%.3f")
+    y1 = st.number_input("Satellite 1 - Y:", value=0.0, format="%.3f")
+    z1 = st.number_input("Satellite 1 - Z:", value=0.0, format="%.3f")
 
 with col2:
-    st.subheader("Satellite 2 Details")
-    sat2_long = st.number_input("Longitude (x2)", -180.0, 180.0, -30.0, key="s2_long")
-    sat2_lat = st.number_input("Latitude (y2)", -90.0, 90.0, -12.0, key="s2_lat")
-    sat2_alt = st.number_input("Altitude (z3)", -90.0, 90.0, -12.0, key="s2_alt")
+    x2 = st.number_input("Satellite 2 - X:", value=0.0, format="%.3f")
+    y2 = st.number_input("Satellite 2 - Y:", value=0.0, format="%.3f")
+    z2 = st.number_input("Satellite 2 - Z:", value=0.0, format="%.3f")
 
-
-if st.button("🔍 Predict Collision (Demo)", type='primary'):
-
-    payload = {
-        "sat1_long": sat1_long,
-        "sat1_lat": sat1_lat,
-        "sat1_alt": sat1_alt,
-        "sat2_long": sat2_long,
-        "sat2_lat": sat2_lat,
-        "sat2_alt": sat2_alt
-    }
-
-    # Call FastAPI model
-    url = "http://127.0.0.1:8000/predict"  # replace with deployed URL if needed
-    response = requests.post(url, json=payload)
-
-    if response.status_code == 200:
-        result = response.json()
-
-        # Extract model outputs
-        prediction = result["prediction"]
-        risk_score = result["risk_score"]           # 0-1
-        conclusion = result["conclusion"]
-
-        # Calculate metrics from inputs
-        p1 = np.array([sat1_long, sat1_lat, sat1_alt])
-        p2 = np.array([sat2_long, sat2_lat, sat2_alt])
+# -----------------------------
+# Predict Button
+# -----------------------------
+if st.button("🔍 Predict Collision"):
+    try:
+        # Positions & distance
+        p1 = np.array([x1, y1, z1])
+        p2 = np.array([x2, y2, z2])
         distance = np.linalg.norm(p1 - p2)
+        
+        # Prediction
+        features = np.concatenate((p1,p2,[distance])).reshape(1,-1)
+        prediction = model.predict(features)[0]
+        proba = model.predict_proba(features)[0][1]*100 if hasattr(model, "predict_proba") else None
 
-        # Collision probability %
-        collision_prob = round(risk_score * 100, 2)
+        # -----------------------------
+        # Time calculation (average speed assumption)
+        # -----------------------------
+        avg_speed_km_s = 7.8  # km/s typical LEO
+        time_seconds = distance / avg_speed_km_s
+        time_minutes = time_seconds / 60
 
-        # Alert Level
-        if collision_prob < 30:
-            alert = "Safe ✅"
-        elif collision_prob <= 70:
-            alert = "Caution ⚠"
+        # -----------------------------
+        # Message
+        # -----------------------------
+        if prediction==1:
+            alert_msg = f"⚠ Collision Risk Detected!\nDistance: {distance:.3f} km\nProbability: {proba:.2f}%\nTime to collision: {time_minutes:.1f} min"
+            conclusion = "Recommendation: Take preventive action. Adjust orbit or monitor closely."
         else:
-            alert = "Danger 🚨"
+            alert_msg = f"✅ No Collision Risk.\nDistance: {distance:.3f} km\nProbability: {proba:.2f}%\nTime: {time_minutes:.1f} min"
+            conclusion = "Orbit is safe. No immediate action required."
 
-    else:
-        st.error("API request failed 🚨")
-        prediction = "Error"
-        collision_prob = 0
-        distance = 0
-        alert = "Unknown"
-        conclusion = "Could not get prediction from model."  
-    
-        st.subheader("Satellites Visual")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.image("two.jpg")
-        with col2:
-            st.image("one.jpg")    
-    
-        st.subheader("Prediction Summary")
-        st.write(f"The predicted collision probability is *{collision_prob}%*. "
-             f"The satellites are approximately *{distance:.2f} km apart*, moving with relative velocity "
-             f"of *{np.random.uniform(0, 10):.2f} km/s*. Alert Level: **{alert}**.")
-        # 3D Orbit Visualization
+        st.markdown(f"### Prediction Message:\n{alert_msg}")
 
-        st.subheader("3D Orbit Visualization (Demo)")
-        fig = plt.figure(figsize=(8,6))
+        # -----------------------------
+        # 3D Visualization
+        # -----------------------------
+        fig = plt.figure(figsize=(6,5))
         ax = fig.add_subplot(111, projection='3d')
-    
-        # Dummy orbit trajectories
-        t = np.linspace(0, 2*np.pi, 100)
-        ax.plot((sat1_alt+10)*np.cos(t), (sat1_alt+10)*np.sin(t), 10*t, label="Satellite 1")
-        ax.plot((sat2_alt+20)*np.cos(t), (sat2_alt+20)*np.sin(t), 20*t, label="Satellite 2")
-    
-        ax.set_xlabel("X (km)")
-        ax.set_ylabel("Y (km)")
-        ax.set_zlabel("Z (km)")
-        ax.set_title("Satellite Orbits (Demo)")
+        ax.scatter(*p1, color='blue', s=50, label='Satellite 1')
+        ax.scatter(*p2, color='red', s=50, label='Satellite 2')
+        ax.plot([p1[0],p2[0]],[p1[1],p2[1]],[p1[2],p2[2]], color='green', linestyle='--', label='Distance Vector')
+        ax.set_xlabel('X (km)'); ax.set_ylabel('Y (km)'); ax.set_zlabel('Z (km)')
+        ax.set_title('Satellite Positions')
         ax.legend()
         st.pyplot(fig)
 
-    
-    # ---------------------------
-    # Risk Matrix / Summary Table
-    # ---------------------------
-        st.subheader("Risk Summary Table")
-        df = pd.DataFrame({
-        "Metric": ["Collision Probability (%)", "Distance (km)", "Relative Velocity (km/s)", "Alert Level"],
-        "Value": [collision_prob, f"{distance:.2f}", f"{np.random.uniform(0, 10):.2f}", alert]
-        })
-        st.table(df)
-    
-        st.subheader("Conclusion")
-        st.write(f"Based on the demo data, the collision risk is *{alert}*. "
-             "Please note this is a demo; actual predictions require the ML model API.")
-        
+        # -----------------------------
+        # Risk Matrix
+        # -----------------------------
+        risk_data = {
+            "Alert": ["Collision Risk" if prediction==1 else "Safe"],
+            "Distance (km)": [distance],
+            "Probability (%)": [proba],
+            "Time (min)": [time_minutes]
+        }
+        risk_df = pd.DataFrame(risk_data)
+        st.subheader("Risk Matrix")
+        st.dataframe(risk_df)
 
+        # -----------------------------
+        # Conclusion
+        # -----------------------------
+        st.subheader("Conclusion")
+        st.markdown(conclusion)
+
+    except Exception as e:
+        st.error(f"Error: {e}")
